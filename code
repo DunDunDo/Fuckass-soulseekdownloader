@@ -15,15 +15,36 @@ namespace LepszyMusicDownloader
         {
             string[] playlista =
             {
-                "here would be the title ",
-                "here would be a second one but make sure to put , between titles"
+            "example",
+
             };
+
+            const int MAX_DOWNLOADS = 3;
+            var sem = new SemaphoreSlim(MAX_DOWNLOADS);
+            var downloadTasks = new List<Task>();
 
             Console.WriteLine("Fuckass soulseek downloader");
             Console.Write("Login: ");
             string username = Console.ReadLine() ?? "";
             Console.Write("Password: ");
             string password = ReadPassword();
+
+            static void DrawBar(long done, long total, string name)
+            {
+                if (total == 0) return;
+
+                int width = 40;
+                double pct = (double)done / total;
+                if (pct > 1) pct = 1;
+
+                int filled = (int)(pct * width);
+
+                Console.Write("\r[");
+                Console.Write(new string('#', filled));
+                Console.Write(new string('.', width - filled));
+                Console.Write($"] {pct * 100:0.0}% {name}   ");
+            }
+
 
             string folder = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
 
@@ -124,20 +145,63 @@ namespace LepszyMusicDownloader
 
                 Console.WriteLine($"Downloading from {selectedUser} → {Path.GetFileName(selectedFile.Filename)}");
 
-                try
+                downloadTasks.Add(Task.Run(async () =>
                 {
-                    await client.DownloadAsync(selectedUser, selectedFile.Filename, sciezka);
-                    Console.WriteLine($"Ready saved as: {Path.GetFileName(sciezka)}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to download: {ex.Message}");
-                }
+                    await sem.WaitAsync();
+
+                    try
+                    {
+                        var rnd = new Random();
+                        int port = rnd.Next(10000, 60000);
+                        using var dlClient = new SoulseekClient(new SoulseekClientOptions(listenPort: port, enableListener: true));
+                        await dlClient.ConnectAsync(username, password);
+
+                        string fileName = Path.GetFileName(selectedFile.Filename);
+                        Console.WriteLine($"\nStart → {fileName}");
+
+                        string outPath = sciezka;
+                        long totalSize = selectedFile.Length ?? 0;
+
+                        // Odpalamy pobieranie równolegle z progressem
+                        var downloadTask = dlClient.DownloadAsync(selectedUser, selectedFile.Filename, outPath);
+
+                        // Pasek postępu
+                        while (!downloadTask.IsCompleted)
+                        {
+                            long current = 0;
+
+                            if (System.IO.File.Exists(outPath))
+                            {
+                                var info = new System.IO.FileInfo(outPath);
+                                current = info.Length;
+                            }
+
+                            DrawBar(current, totalSize, fileName);
+                            await Task.Delay(200);
+                        }
+
+                        // Ostatnie odświeżenie
+                        DrawBar(totalSize, totalSize, fileName);
+                        Console.WriteLine($"\nGOTOWE → {fileName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Błąd pobierania: {ex.Message}");
+                    }
+                    finally
+                    {
+                        sem.Release();
+                    }
+                }));
+
 
                 await Task.Delay(3000);
             }
 
             Console.WriteLine("\nEnd get the fuck out of here");
+            Console.WriteLine("\nCzekam na wszystkie pobrania…");
+            await Task.WhenAll(downloadTasks);
+
         }
 
         // ──────────────────────────────────────────────────────────────
