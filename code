@@ -1,0 +1,179 @@
+using Soulseek;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+
+using SsFile = Soulseek.File;
+
+namespace LepszyMusicDownloader
+{
+    internal class Program
+    {
+        static async Task Main(string[] args)
+        {
+            string[] playlista =
+            {
+                "here would be the title ",
+                "here would be a second one but make sure to put , between titles"
+            };
+
+            Console.WriteLine("Fuckass soulseek downloader");
+            Console.Write("Login: ");
+            string username = Console.ReadLine() ?? "";
+            Console.Write("Password: ");
+            string password = ReadPassword();
+
+            string folder = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+
+            var options = new SoulseekClientOptions(
+                listenPort: 50000,
+                enableListener: true
+            );
+
+            var candidates = new List<(string Username, SsFile File, int QueueLength)>();
+
+            for (int i = 0; i < playlista.Length; i++)
+            {
+                string query = playlista[i];
+                Console.WriteLine($"\n[{i + 1}/{playlista.Length}] Searching → {query}");
+                candidates.Clear();
+
+                using SoulseekClient client = new SoulseekClient(options);
+
+                // LOGOWANIE
+                try { await client.ConnectAsync(username, password); }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Login failed: {ex.Message}");
+                    i--; await Task.Delay(6000); continue;
+                }
+
+                Console.WriteLine($"Logged as {client.Username}");
+
+                // WYSZUKIWANIE – NOWE API
+                try
+                {
+                    SearchQuery sq = SearchQuery.FromText(query);
+
+                    var searchResult = await client.SearchAsync(sq);
+
+                    foreach (var response in searchResult.Responses)
+                    {
+                        foreach (var file in response.Files)
+                        {
+                            candidates.Add((response.Username, file, response.QueueLength));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error while searching: {ex.Message}");
+                    continue;
+                }
+
+                if (candidates.Count == 0)
+                {
+                    Console.WriteLine("Found nothing :(");
+                    continue;
+                }
+
+                // Najlepsze wyniki
+                var best = candidates
+                    .OrderByDescending(c => c.File.BitRate ?? 0)
+                    .ThenByDescending(c => c.File.SampleRate ?? 0)
+                    .ThenByDescending(c => c.File.Length)
+                    .ThenBy(c => c.QueueLength)
+                    .Take(15)
+                    .ToList();
+
+                Console.WriteLine($"\nFound {best.Count} Fitting results:");
+                Console.WriteLine(new string('-', 100));
+
+                for (int j = 0; j < best.Count; j++)
+                {
+                    var (user, file, queue) = best[j];
+                    string name = Path.GetFileName(file.Filename);
+                    string size = $"{file.Length / 1048576.0:F1} MB";
+                    string br = file.BitRate?.ToString() ?? "???";
+                    string q = queue > 0 ? $"[Queue: {queue}]" : "[Free]";
+
+                    Console.WriteLine($"{j + 1,2}. {user.PadRight(20)} {br.PadRight(6)} kbps {size.PadRight(10)} {q} → {name}");
+                }
+
+                Console.WriteLine(new string('-', 100));
+                Console.Write("Choose beetwen 1-15 (Enter/s = skip, q = end): ");
+                string? wybor = Console.ReadLine()?.Trim().ToLowerInvariant();
+
+                if (wybor == "q") break;
+                if (string.IsNullOrWhiteSpace(wybor) || wybor == "s")
+                {
+                    Console.WriteLine("Skipping song...");
+                    continue;
+                }
+
+                if (!int.TryParse(wybor, out int nr) || nr < 1 || nr > best.Count)
+                {
+                    Console.WriteLine("Wrong number dumbass skipping song");
+                    continue;
+                }
+
+                var (selectedUser, selectedFile, _) = best[nr - 1];
+                string sciezka = GetUniquePath(Path.Combine(folder, Path.GetFileName(selectedFile.Filename)!));
+
+                Console.WriteLine($"Downloading from {selectedUser} → {Path.GetFileName(selectedFile.Filename)}");
+
+                try
+                {
+                    await client.DownloadAsync(selectedUser, selectedFile.Filename, sciezka);
+                    Console.WriteLine($"Ready saved as: {Path.GetFileName(sciezka)}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to download: {ex.Message}");
+                }
+
+                await Task.Delay(3000);
+            }
+
+            Console.WriteLine("\nEnd get the fuck out of here");
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        static string ReadPassword()
+        {
+            string p = "";
+            while (true)
+            {
+                var k = Console.ReadKey(true);
+                if (k.Key == ConsoleKey.Enter) break;
+                if (k.Key == ConsoleKey.Backspace && p.Length > 0)
+                {
+                    p = p[..^1];
+                    Console.Write("\b \b");
+                }
+                else if (!char.IsControl(k.KeyChar))
+                {
+                    p += k.KeyChar;
+                    Console.Write("*");
+                }
+            }
+            Console.WriteLine();
+            return p;
+        }
+
+        static string GetUniquePath(string path)
+        {
+            if (!System.IO.File.Exists(path)) return path;
+            string dir = Path.GetDirectoryName(path)!;
+            string name = Path.GetFileNameWithoutExtension(path);
+            string ext = Path.GetExtension(path);
+            int i = 1;
+            string nowa;
+            do { nowa = Path.Combine(dir, $"{name} ({i++}){ext}"); }
+            while (System.IO.File.Exists(nowa));
+            return nowa;
+        }
+    }
+}
