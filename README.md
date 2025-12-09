@@ -1,4 +1,4 @@
-Compiled with visual studio using c#. Make sure to add:
+SWITCH THE README TO CODE!!!!!! Compiled with visual studio using c#. Make sure to add:
   "<ItemGroup>
     <PackageReference Include="Soulseek" Version="8.5.0" />
   </ItemGroup>
